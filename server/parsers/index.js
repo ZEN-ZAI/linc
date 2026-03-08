@@ -2,6 +2,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { parseJavaScript } from './javascript.js';
 import { parsePython } from './python.js';
+import { parseCSharp } from './csharp.js';
+import { parseGolang } from './golang.js';
 
 const EXT_MAP = {
   '.js':  parseJavaScript,
@@ -11,6 +13,8 @@ const EXT_MAP = {
   '.mjs': parseJavaScript,
   '.cjs': parseJavaScript,
   '.py':  parsePython,
+  '.cs':  parseCSharp,
+  '.go':  parseGolang,
 };
 
 export const SUPPORTED_EXTENSIONS = new Set(Object.keys(EXT_MAP));

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { SearchBar } from './SearchBar.jsx';
 
 export function ControlPanel({
@@ -8,25 +8,17 @@ export function ControlPanel({
   analyzePath,
   onPathChange,
   onAnalyze,
+  onClear,
   loading,
   onHighlight,
   meta,
 }) {
-  const [picking, setPicking] = useState(false);
-
   async function handlePickFolder() {
-    setPicking(true);
     try {
       const res = await fetch('/api/pick-folder');
       const data = await res.json();
-      if (data.path) {
-        onPathChange(data.path);
-      }
-    } catch {
-      // silently ignore — user cancelled or platform unsupported
-    } finally {
-      setPicking(false);
-    }
+      if (data.path) { onPathChange(data.path); onAnalyze(data.path); }
+    } catch { /* cancelled or unsupported */ }
   }
 
   const { fileTypes, folders } = useMemo(() => {
@@ -36,7 +28,6 @@ export function ControlPanel({
     return { fileTypes: exts, folders: dirs };
   }, [graphData]);
 
-  // Exclude-based: toggle hides/shows a type or folder
   function toggleExt(ext) {
     const next = new Set(filters.hiddenFileTypes);
     if (next.has(ext)) next.delete(ext); else next.add(ext);
@@ -49,9 +40,7 @@ export function ControlPanel({
     onFilterChange({ ...filters, hiddenFolders: next });
   }
 
-  const handleKeyDown = e => {
-    if (e.key === 'Enter') onAnalyze(analyzePath);
-  };
+  const handleKeyDown = e => { if (e.key === 'Enter') onAnalyze(analyzePath); };
 
   return (
     <div style={panelStyle}>
@@ -77,25 +66,17 @@ export function ControlPanel({
           />
           <button
             onClick={handlePickFolder}
-            disabled={picking}
             title="Browse for folder"
             style={{
               ...inputStyle,
-              flex: 'none',
-              width: 30,
-              padding: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              fontSize: 14,
-              border: '1px solid #4a5568',
-              borderRadius: 6,
-              background: picking ? '#2d3748' : '#1a202c',
-              color: picking ? '#718096' : '#a0aec0',
+              flex: 'none', width: 30, padding: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', fontSize: 14,
+              border: '1px solid #4a5568', borderRadius: 6,
+              background: '#1a202c', color: '#a0aec0',
             }}
           >
-            {picking ? '…' : '⌘'}
+            ⌘
           </button>
         </div>
         <button
@@ -105,6 +86,19 @@ export function ControlPanel({
         >
           {loading ? 'Analyzing…' : 'Analyze'}
         </button>
+        {graphData && (
+          <button
+            onClick={onClear}
+            style={{
+              ...btnStyle, marginTop: 4,
+              background: 'transparent',
+              color: '#718096',
+              border: '1px solid #2d3748',
+            }}
+          >
+            Clear graph
+          </button>
+        )}
         {meta && (
           <p style={{ fontSize: 10, color: '#4a5568', marginTop: 6 }}>
             {meta.fileCount} files · {new Date(meta.parsedAt).toLocaleTimeString()}
@@ -118,7 +112,7 @@ export function ControlPanel({
         <SearchBar graphData={graphData} onHighlight={onHighlight} />
       </section>
 
-      {/* External toggle — frontend filter only */}
+      {/* External toggle */}
       <section style={sectionStyle}>
         <CheckRow
           checked={filters.showExternal}
@@ -200,6 +194,8 @@ function CheckRow({ checked, onChange, label }) {
     </label>
   );
 }
+
+
 
 const panelStyle = {
   width: 220,

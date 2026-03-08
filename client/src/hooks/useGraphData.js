@@ -28,5 +28,10 @@ export function useGraphData() {
     }
   }, []);
 
-  return { graphData, loading, error, analyze };
+  const clearGraph = useCallback(() => {
+    setGraphData(null);
+    setError(null);
+  }, []);
+
+  return { graphData, loading, error, analyze, clearGraph };
 }

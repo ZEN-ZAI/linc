@@ -23,9 +23,12 @@ const DEFAULT_EXCLUDES = [
   '**/.next/**',
   '**/.nuxt/**',
   '**/coverage/**',
+  '**/bin/**',
+  '**/obj/**',
+  '**/vendor/**',
 ];
 
-const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py'];
+const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.cs', '.go'];
 
 export async function buildGraph(rootPath, options = {}) {
   const { includeExternal = false } = options;
@@ -54,6 +57,25 @@ export async function buildGraph(rootPath, options = {}) {
     const results = await Promise.all(batch.map(f => parseFile(f).then(deps => [f, deps])));
     for (const [filePath, deps] of results) {
       parsedMap.set(filePath, deps);
+    }
+  }
+
+  // 3b. Read go.mod for Go module name (used to detect internal imports)
+  let goModuleName = null;
+  try {
+    const goModContent = await fs.readFile(path.join(rootPath, 'go.mod'), 'utf-8');
+    const modMatch = goModContent.match(/^module\s+(\S+)/m);
+    if (modMatch) goModuleName = modMatch[1];
+  } catch { /* no go.mod */ }
+
+  // 3c. First pass: collect C# namespace declarations → namespace → absPath
+  const nsToFile = new Map();
+  for (const [absPath, deps] of parsedMap) {
+    if (path.extname(absPath).toLowerCase() !== '.cs') continue;
+    for (const dep of deps) {
+      if (dep.type === 'ns_decl' && dep.nsDecl && !nsToFile.has(dep.nsDecl)) {
+        nsToFile.set(dep.nsDecl, absPath);
+      }
     }
   }
 
@@ -87,9 +109,14 @@ export async function buildGraph(rootPath, options = {}) {
   for (const [absPath, deps] of parsedMap) {
     const fromId = path.relative(rootPath, absPath).replace(/\\/g, '/');
 
+    const srcExt = path.extname(absPath).toLowerCase();
+
     for (const dep of deps) {
       let targetId;
       let isExternal = false;
+
+      // Skip namespace declarations (C# ns_decl = declaration, not a dependency)
+      if (dep.type === 'ns_decl') continue;
 
       if (dep.source === null) {
         // Inheritance — skip (can't resolve class name to file without symbol table)
@@ -108,25 +135,48 @@ export async function buildGraph(rootPath, options = {}) {
 
         targetId = path.relative(rootPath, resolved).replace(/\\/g, '/');
       } else {
-        // Bare specifier = external package
-        isExternal = true;
-        // Strip sub-path (e.g. 'lodash/merge' → 'lodash')
-        const pkgName = dep.source.startsWith('@')
-          ? dep.source.split('/').slice(0, 2).join('/')
-          : dep.source.split('/')[0];
-        targetId = `[ext] ${pkgName}`;
+        // Bare specifier — try language-specific internal resolution first
+        let internalResolved = false;
 
-        if (!externalNodes.has(targetId) && includeExternal) {
-          const extNode = {
-            id: targetId,
-            label: pkgName,
-            folder: 'node_modules',
-            ext: '',
-            connectionCount: 0,
-            isExternal: true,
-            size: 0,
-          };
-          externalNodes.set(targetId, extNode);
+        if (srcExt === '.cs') {
+          // C# using directive: check against namespace→file map
+          const nsFile = nsToFile.get(dep.source);
+          if (nsFile) {
+            targetId = path.relative(rootPath, nsFile).replace(/\\/g, '/');
+            internalResolved = true;
+          }
+        } else if (srcExt === '.go' && goModuleName && dep.source.startsWith(goModuleName + '/')) {
+          // Go internal import: strip module prefix and resolve directory
+          const subPath = dep.source.slice(goModuleName.length + 1);
+          const candidate = path.resolve(rootPath, subPath);
+          const resolved = tryResolve(candidate, allFilePaths);
+          if (resolved) {
+            targetId = path.relative(rootPath, resolved).replace(/\\/g, '/');
+            internalResolved = true;
+          }
+        }
+
+        if (!internalResolved) {
+          // External package
+          isExternal = true;
+          // Strip sub-path (e.g. 'lodash/merge' → 'lodash')
+          const pkgName = dep.source.startsWith('@')
+            ? dep.source.split('/').slice(0, 2).join('/')
+            : dep.source.split('/')[0];
+          targetId = `[ext] ${pkgName}`;
+
+          if (!externalNodes.has(targetId) && includeExternal) {
+            const extNode = {
+              id: targetId,
+              label: pkgName,
+              folder: 'node_modules',
+              ext: '',
+              connectionCount: 0,
+              isExternal: true,
+              size: 0,
+            };
+            externalNodes.set(targetId, extNode);
+          }
         }
       }
 
