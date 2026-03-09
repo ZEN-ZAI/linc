@@ -22,7 +22,7 @@ function buildTree(folders) {
 }
 
 /** Collect all leaf folder paths under a tree node */
-function collectFolders(node, allFolders) {
+function collectFolders(node) {
   const result = [...node.folders];
   for (const child of Object.values(node.children)) {
     result.push(...collectFolders(child, allFolders));
@@ -44,7 +44,6 @@ function TreeNode({ node, depth, hiddenFolders, onToggle, onToggleAll, defaultEx
   const [expanded, setExpanded] = useState(defaultExpanded || depth < 1);
   const childEntries = Object.entries(node.children).sort(([a], [b]) => a.localeCompare(b));
   const hasChildren = childEntries.length > 0;
-  const isLeaf = node.folders.length > 0 && !hasChildren;
   const checkState = getCheckState(node, hiddenFolders);
   const checked = checkState === 'all';
   const indeterminate = checkState === 'partial';
