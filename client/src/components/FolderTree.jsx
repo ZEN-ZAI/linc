@@ -25,7 +25,7 @@ function buildTree(folders) {
 function collectFolders(node) {
   const result = [...node.folders];
   for (const child of Object.values(node.children)) {
-    result.push(...collectFolders(child, allFolders));
+    result.push(...collectFolders(child));
   }
   return result;
 }
