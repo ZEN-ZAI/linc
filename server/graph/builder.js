@@ -30,6 +30,151 @@ const DEFAULT_EXCLUDES = [
 
 const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.cs', '.go'];
 
+// Strip JSONC features: comments and trailing commas (tsconfig.json supports these)
+// Single char-by-char walk handles everything in a string-aware way
+function stripJsonComments(text) {
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    // String literal — copy verbatim
+    if (text[i] === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\\') j++; // skip escaped char
+        j++;
+      }
+      result += text.slice(i, j + 1);
+      i = j + 1;
+    // Line comment
+    } else if (text[i] === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    // Block comment
+    } else if (text[i] === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i += 2;
+    // Trailing comma — peek ahead past whitespace for } or ]
+    } else if (text[i] === ',') {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (j < text.length && (text[j] === '}' || text[j] === ']')) {
+        i++; // drop the trailing comma
+      } else {
+        result += text[i++];
+      }
+    } else {
+      result += text[i++];
+    }
+  }
+  return result;
+}
+
+// Read and parse a single tsconfig/jsconfig file (throws on ENOENT or parse error)
+async function readTsConfig(configPath) {
+  const raw = await fs.readFile(configPath, 'utf-8');
+  return JSON.parse(stripJsonComments(raw));
+}
+
+// Resolve compilerOptions.paths from a parsed config, following "extends" chain
+async function resolvePathsFromConfig(configPath, visited = new Set()) {
+  if (visited.has(configPath)) return null; // circular extends guard
+  visited.add(configPath);
+
+  const config = await readTsConfig(configPath); // throws if file missing or malformed
+  const configDir = path.dirname(configPath);
+  const baseUrl = config.compilerOptions?.baseUrl || '.';
+  const paths = config.compilerOptions?.paths;
+
+  if (paths) {
+    return { absBase: path.resolve(configDir, baseUrl), paths };
+  }
+
+  // No paths — follow "extends" to inherit from parent config
+  if (config.extends) {
+    const parentPath = config.extends.endsWith('.json')
+      ? path.resolve(configDir, config.extends)
+      : path.resolve(configDir, config.extends + '.json');
+    try {
+      return await resolvePathsFromConfig(parentPath, visited);
+    } catch { /* extends target missing/broken — treat as no paths */ }
+  }
+
+  return null; // config found, no paths, no extends — authoritative
+}
+
+// Sort path patterns by specificity: exact matches first, then longest prefix+suffix
+function sortPathEntries(paths) {
+  return Object.entries(paths).sort(([a], [b]) => {
+    const aStarIdx = a.indexOf('*');
+    const bStarIdx = b.indexOf('*');
+    const aExact = aStarIdx === -1;
+    const bExact = bStarIdx === -1;
+    if (aExact !== bExact) return aExact ? -1 : 1;
+    const aLen = aExact ? a.length : aStarIdx + (a.length - aStarIdx - 1);
+    const bLen = bExact ? b.length : bStarIdx + (b.length - bStarIdx - 1);
+    return bLen - aLen || a.localeCompare(b);
+  });
+}
+
+async function loadTsPaths(rootPath) {
+  const tsConfigNames = ['tsconfig.json', 'tsconfig.app.json', 'jsconfig.json'];
+  // Search rootPath and up to 3 parent directories
+  let dir = rootPath;
+  for (let depth = 0; depth < 4; depth++) {
+    for (const name of tsConfigNames) {
+      const configPath = path.join(dir, name);
+      try {
+        const result = await resolvePathsFromConfig(configPath);
+        if (result) {
+          result.sortedEntries = sortPathEntries(result.paths);
+          return result;
+        }
+        // Config found but no paths (even after extends) — authoritative, stop
+        return null;
+      } catch (err) {
+        if (err?.code === 'ENOENT') continue; // file not found, try next name
+        return null; // parse error = authoritative, stop
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+  return null;
+}
+
+function tryResolveTsPaths(specifier, tsConfig, allFilePaths) {
+  if (!tsConfig) return null;
+  const { absBase, sortedEntries } = tsConfig;
+
+  for (const [pattern, mappings] of sortedEntries) {
+    const starIdx = pattern.indexOf('*');
+    if (starIdx === -1) {
+      // Exact match: "@components" -> ["./src/components/index.ts"]
+      if (specifier !== pattern) continue;
+      for (const mapping of mappings) {
+        const candidate = path.resolve(absBase, mapping);
+        const resolved = tryResolve(candidate, allFilePaths);
+        if (resolved) return resolved;
+      }
+    } else {
+      // Wildcard: "@/*" -> ["./src/*"]
+      const prefix = pattern.slice(0, starIdx);
+      const suffix = pattern.slice(starIdx + 1);
+      if (!specifier.startsWith(prefix)) continue;
+      if (suffix && !specifier.endsWith(suffix)) continue;
+      const captured = specifier.slice(prefix.length, suffix ? -suffix.length || undefined : undefined);
+      for (const mapping of mappings) {
+        const mapped = mapping.replace('*', captured);
+        const candidate = path.resolve(absBase, mapped);
+        const resolved = tryResolve(candidate, allFilePaths);
+        if (resolved) return resolved;
+      }
+    }
+  }
+  return null;
+}
+
 export async function buildGraph(rootPath, options = {}) {
   const { includeExternal = false } = options;
 
@@ -60,7 +205,10 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 3b. Read go.mod for Go module name (used to detect internal imports)
+  // 3b. Load TypeScript path aliases (tsconfig.json / jsconfig.json)
+  const tsConfig = await loadTsPaths(rootPath);
+
+  // 3c. Read go.mod for Go module name (used to detect internal imports)
   let goModuleName = null;
   try {
     const goModContent = await fs.readFile(path.join(rootPath, 'go.mod'), 'utf-8');
@@ -68,7 +216,7 @@ export async function buildGraph(rootPath, options = {}) {
     if (modMatch) goModuleName = modMatch[1];
   } catch { /* no go.mod */ }
 
-  // 3c. First pass: collect C# namespace declarations → namespace → absPath
+  // 3d. First pass: collect C# namespace declarations → namespace → absPath
   const nsToFile = new Map();
   for (const [absPath, deps] of parsedMap) {
     if (path.extname(absPath).toLowerCase() !== '.cs') continue;
@@ -105,6 +253,8 @@ export async function buildGraph(rootPath, options = {}) {
   // 5. Resolve specifiers and build raw links
   const rawLinks = new Map(); // `src|tgt` -> { source, target, type, strength }
   const externalNodes = new Map(); // externalId -> node
+  const tsPathCache = new Map(); // specifier -> resolved|null (memoize path alias lookups)
+  const JS_TS_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
 
   for (const [absPath, deps] of parsedMap) {
     const fromId = path.relative(rootPath, absPath).replace(/\\/g, '/');
@@ -135,10 +285,23 @@ export async function buildGraph(rootPath, options = {}) {
 
         targetId = path.relative(rootPath, resolved).replace(/\\/g, '/');
       } else {
-        // Bare specifier — try language-specific internal resolution first
+        // Bare specifier — try TypeScript path aliases, then language-specific resolution
         let internalResolved = false;
 
-        if (srcExt === '.cs') {
+        // Only attempt TS path resolution for JS/TS files
+        let tsResolved = null;
+        if (JS_TS_EXTS.has(srcExt)) {
+          if (tsPathCache.has(dep.source)) {
+            tsResolved = tsPathCache.get(dep.source);
+          } else {
+            tsResolved = tryResolveTsPaths(dep.source, tsConfig, allFilePaths);
+            tsPathCache.set(dep.source, tsResolved);
+          }
+        }
+        if (tsResolved) {
+          targetId = path.relative(rootPath, tsResolved).replace(/\\/g, '/');
+          internalResolved = true;
+        } else if (srcExt === '.cs') {
           // C# using directive: check against namespace→file map
           const nsFile = nsToFile.get(dep.source);
           if (nsFile) {
