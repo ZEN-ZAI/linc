@@ -31,7 +31,7 @@ const DEFAULT_EXCLUDES = [
 const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.cs', '.go'];
 
 // Strip JSONC features: comments and trailing commas (tsconfig.json supports these)
-// Walks character-by-character to avoid stripping // inside string values
+// Single char-by-char walk handles everything in a string-aware way
 function stripJsonComments(text) {
   let result = '';
   let i = 0;
@@ -53,12 +53,67 @@ function stripJsonComments(text) {
       i += 2;
       while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
       i += 2;
+    // Trailing comma — peek ahead past whitespace for } or ]
+    } else if (text[i] === ',') {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (j < text.length && (text[j] === '}' || text[j] === ']')) {
+        i++; // drop the trailing comma
+      } else {
+        result += text[i++];
+      }
     } else {
       result += text[i++];
     }
   }
-  // Strip trailing commas before } or ]
-  return result.replace(/,\s*([}\]])/g, '$1');
+  return result;
+}
+
+// Read and parse a single tsconfig/jsconfig file (throws on ENOENT or parse error)
+async function readTsConfig(configPath) {
+  const raw = await fs.readFile(configPath, 'utf-8');
+  return JSON.parse(stripJsonComments(raw));
+}
+
+// Resolve compilerOptions.paths from a parsed config, following "extends" chain
+async function resolvePathsFromConfig(configPath, visited = new Set()) {
+  if (visited.has(configPath)) return null; // circular extends guard
+  visited.add(configPath);
+
+  const config = await readTsConfig(configPath); // throws if file missing or malformed
+  const configDir = path.dirname(configPath);
+  const baseUrl = config.compilerOptions?.baseUrl || '.';
+  const paths = config.compilerOptions?.paths;
+
+  if (paths) {
+    return { absBase: path.resolve(configDir, baseUrl), paths };
+  }
+
+  // No paths — follow "extends" to inherit from parent config
+  if (config.extends) {
+    const parentPath = config.extends.endsWith('.json')
+      ? path.resolve(configDir, config.extends)
+      : path.resolve(configDir, config.extends + '.json');
+    try {
+      return await resolvePathsFromConfig(parentPath, visited);
+    } catch { /* extends target missing/broken — treat as no paths */ }
+  }
+
+  return null; // config found, no paths, no extends — authoritative
+}
+
+// Sort path patterns by specificity: exact matches first, then longest prefix+suffix
+function sortPathEntries(paths) {
+  return Object.entries(paths).sort(([a], [b]) => {
+    const aStarIdx = a.indexOf('*');
+    const bStarIdx = b.indexOf('*');
+    const aExact = aStarIdx === -1;
+    const bExact = bStarIdx === -1;
+    if (aExact !== bExact) return aExact ? -1 : 1;
+    const aLen = aExact ? a.length : aStarIdx + (a.length - aStarIdx - 1);
+    const bLen = bExact ? b.length : bStarIdx + (b.length - bStarIdx - 1);
+    return bLen - aLen || a.localeCompare(b);
+  });
 }
 
 async function loadTsPaths(rootPath) {
@@ -67,17 +122,18 @@ async function loadTsPaths(rootPath) {
   let dir = rootPath;
   for (let depth = 0; depth < 4; depth++) {
     for (const name of tsConfigNames) {
+      const configPath = path.join(dir, name);
       try {
-        const configPath = path.join(dir, name);
-        const raw = await fs.readFile(configPath, 'utf-8');
-        const config = JSON.parse(stripJsonComments(raw));
-        const baseUrl = config.compilerOptions?.baseUrl || '.';
-        const paths = config.compilerOptions?.paths;
-        if (!paths) return null; // config found but no paths — authoritative, stop searching
-        const absBase = path.resolve(dir, baseUrl);
-        return { absBase, paths };
+        const result = await resolvePathsFromConfig(configPath);
+        if (result) {
+          result.sortedEntries = sortPathEntries(result.paths);
+          return result;
+        }
+        // Config found but no paths (even after extends) — authoritative, stop
+        return null;
       } catch (err) {
-        if (err?.code !== 'ENOENT') return null; // parse error = authoritative, stop
+        if (err?.code === 'ENOENT') continue; // file not found, try next name
+        return null; // parse error = authoritative, stop
       }
     }
     const parent = path.dirname(dir);
@@ -89,21 +145,9 @@ async function loadTsPaths(rootPath) {
 
 function tryResolveTsPaths(specifier, tsConfig, allFilePaths) {
   if (!tsConfig) return null;
-  const { absBase, paths } = tsConfig;
+  const { absBase, sortedEntries } = tsConfig;
 
-  // Sort patterns by specificity: exact matches first, then by longest prefix+suffix
-  const entries = Object.entries(paths).sort(([a], [b]) => {
-    const aStarIdx = a.indexOf('*');
-    const bStarIdx = b.indexOf('*');
-    const aExact = aStarIdx === -1;
-    const bExact = bStarIdx === -1;
-    if (aExact !== bExact) return aExact ? -1 : 1;
-    const aLen = aExact ? a.length : aStarIdx + (a.length - aStarIdx - 1);
-    const bLen = bExact ? b.length : bStarIdx + (b.length - bStarIdx - 1);
-    return bLen - aLen || a.localeCompare(b);
-  });
-
-  for (const [pattern, mappings] of entries) {
+  for (const [pattern, mappings] of sortedEntries) {
     const starIdx = pattern.indexOf('*');
     if (starIdx === -1) {
       // Exact match: "@components" -> ["./src/components/index.ts"]
