@@ -6,6 +6,7 @@ export function GraphControls({
   onFitView, onResetLayout,
   viewMode, onViewMode,
   showClusters, onClustersChange,
+  is3D, onToggle3D,
 }) {
   const [open, setOpen] = useState(true);
 
@@ -76,6 +77,14 @@ export function GraphControls({
                 Clusters
               </ToggleBtn>
             </div>
+            <Divider />
+            <ToggleBtn
+              active={is3D}
+              onClick={onToggle3D}
+              activeColor="#d6bcfa" activeBg="#322659"
+            >
+              3D
+            </ToggleBtn>
           </div>
         </div>
       )}
