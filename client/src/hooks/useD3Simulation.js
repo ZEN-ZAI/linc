@@ -2,8 +2,6 @@ import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { colorScale, nodeRadius } from '../utils/graphColors.js';
 
-export { nodeRadius };
-
 export function useD3Simulation({
   svgRef, graphData, highlightedIds, onNodeClick,
   incomingIds, outgoingIds,

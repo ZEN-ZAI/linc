@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as d3 from 'd3';
 import * as THREE from 'three';
-import { colorScale, nodeRadius, nodeBaseColor, nodeHighlightColor, linkHighlightColor } from '../utils/graphColors.js';
+import { colorScale, nodeBaseColor, nodeHighlightColor, linkHighlightColor, hexToRgba } from '../utils/graphColors.js';
 
 export function GraphCanvas3D({
   graphData, highlightedIds, onNodeClick,
@@ -121,19 +121,34 @@ export function GraphCanvas3D({
   }, [showClusters]);
 
   // Render transparent cluster spheres around folder groups
-  const clusterMeshesRef = useRef([]);
+  // Reuse meshes keyed by folder, update position/scale instead of recreating
+  const clusterMeshMapRef = useRef(new Map()); // folder -> mesh
+  const unitGeoRef = useRef(null);
+
+  const disposeClusterMeshes = useCallback((scene) => {
+    for (const mesh of clusterMeshMapRef.current.values()) {
+      if (scene) try { scene.remove(mesh); } catch {}
+      mesh.material.dispose();
+    }
+    clusterMeshMapRef.current.clear();
+    if (unitGeoRef.current) { unitGeoRef.current.dispose(); unitGeoRef.current = null; }
+  }, []);
+
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
     let scene;
     try { scene = fg.scene(); } catch { return; }
     if (!scene) return;
-    // Remove old cluster meshes
-    for (const m of clusterMeshesRef.current) scene.remove(m);
-    clusterMeshesRef.current = [];
-    if (!showClusters) return;
 
-    // Update cluster spheres on each render frame
+    if (!showClusters) {
+      disposeClusterMeshes(scene);
+      return;
+    }
+
+    // Shared unit sphere geometry (scaled per cluster)
+    if (!unitGeoRef.current) unitGeoRef.current = new THREE.SphereGeometry(1, 16, 12);
+
     const updateClusters = () => {
       const cur = fgRef.current;
       if (!cur) return;
@@ -143,18 +158,19 @@ export function GraphCanvas3D({
       let curScene;
       try { curScene = cur.scene(); } catch { return; }
       if (!curScene) return;
-      // Group by folder
+
+      // Group nodes by folder
       const groups = new Map();
       for (const n of data.nodes) {
         if (!groups.has(n.folder)) groups.set(n.folder, []);
         groups.get(n.folder).push(n);
       }
-      // Remove old meshes
-      for (const m of clusterMeshesRef.current) curScene.remove(m);
-      clusterMeshesRef.current = [];
-      // Create new spheres
+
+      const activeFolders = new Set();
       for (const [folder, nodes] of groups) {
         if (nodes.length < 2) continue;
+        activeFolders.add(folder);
+
         let cx = 0, cy = 0, cz = 0;
         for (const n of nodes) { cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; }
         cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
@@ -164,25 +180,36 @@ export function GraphCanvas3D({
           maxR = Math.max(maxR, Math.sqrt(dx * dx + dy * dy + dz * dz));
         }
         const radius = maxR + 12;
-        const color = new THREE.Color(colorScale(folder));
-        const geo = new THREE.SphereGeometry(radius, 16, 12);
-        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.06, depthWrite: false });
-        const mesh = new THREE.Mesh(geo, mat);
+
+        let mesh = clusterMeshMapRef.current.get(folder);
+        if (!mesh) {
+          const color = new THREE.Color(colorScale(folder));
+          const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.06, depthWrite: false });
+          mesh = new THREE.Mesh(unitGeoRef.current, mat);
+          clusterMeshMapRef.current.set(folder, mesh);
+          curScene.add(mesh);
+        }
         mesh.position.set(cx, cy, cz);
-        curScene.add(mesh);
-        clusterMeshesRef.current.push(mesh);
+        mesh.scale.setScalar(radius);
+      }
+
+      // Remove meshes for folders no longer active
+      for (const [folder, mesh] of clusterMeshMapRef.current) {
+        if (!activeFolders.has(folder)) {
+          curScene.remove(mesh);
+          mesh.material.dispose();
+          clusterMeshMapRef.current.delete(folder);
+        }
       }
     };
 
-    // Run periodically while clusters are shown
     updateClusters();
     const interval = setInterval(updateClusters, 500);
     return () => {
       clearInterval(interval);
-      for (const m of clusterMeshesRef.current) { try { scene.remove(m); } catch {} }
-      clusterMeshesRef.current = [];
+      disposeClusterMeshes(scene);
     };
-  }, [showClusters, graphData3D]);
+  }, [showClusters, graphData3D, disposeClusterMeshes]);
 
   // Configure forces once the ForceGraph3D ref is available; reset interaction flag on new data
   useEffect(() => {
@@ -218,7 +245,7 @@ export function GraphCanvas3D({
     }
     if (highlightedIds && highlightedIds.size > 0 && !highlightedIds.has(d.id)) {
       const base = nodeBaseColor(d);
-      return base + '18';
+      return hexToRgba(base, 0.1);
     }
     return nodeHighlightColor(d, highlightedIds, incomingIds, outgoingIds);
   }, [viewMode, depthMap, maxDepth, highlightedIds, incomingIds, outgoingIds]);
