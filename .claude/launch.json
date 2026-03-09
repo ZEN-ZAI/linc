@@ -3,15 +3,20 @@
   "configurations": [
     {
       "name": "linc-server",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["server/index.js"],
-      "port": 3001,
-      "autoPort": false
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace=server"],
+      "port": 3001
     },
     {
       "name": "linc-client",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--workspace=client"],
+      "port": 5173
+    },
+    {
+      "name": "linc-tauri",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "tauri:dev"],
       "port": 5173
     }
   ]

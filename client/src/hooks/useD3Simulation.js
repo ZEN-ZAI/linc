@@ -1,11 +1,8 @@
 import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
+import { colorScale, nodeRadius } from '../utils/graphColors.js';
 
-const colorScale = d3.scaleOrdinal(d3.schemeTableau10);
-
-export function nodeRadius(d) {
-  return 4 + Math.sqrt(d.connectionCount || 0) * 2;
-}
+export { nodeRadius };
 
 export function useD3Simulation({
   svgRef, graphData, highlightedIds, onNodeClick,

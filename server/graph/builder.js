@@ -17,6 +17,7 @@ const DEFAULT_EXCLUDES = [
   '**/dist/**',
   '**/build/**',
   '**/out/**',
+  '**/target/**',
   '**/__pycache__/**',
   '**/.venv/**',
   '**/venv/**',

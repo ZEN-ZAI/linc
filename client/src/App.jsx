@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
 import { GraphCanvas } from './components/GraphCanvas.jsx';
+import { GraphCanvas3D } from './components/GraphCanvas3D.jsx';
 import { GraphControls } from './components/GraphControls.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { ControlPanel } from './components/ControlPanel.jsx';
@@ -50,6 +51,7 @@ export default function App() {
   const [showClusters, setShowClusters] = useState(false);
   const [forceStrength, setForceStrength] = useState(1);
   const [linkDistance, setLinkDistance] = useState(120);
+  const [is3D, setIs3D] = useState(false);
   const graphControlsRef = useRef({});
 
   const filteredGraphData = useMemo(() => {
@@ -163,10 +165,27 @@ export default function App() {
             onViewMode={handleViewMode}
             showClusters={showClusters}
             onClustersChange={setShowClusters}
+            is3D={is3D}
+            onToggle3D={() => setIs3D(v => !v)}
           />
         )}
-        {filteredGraphData && (
+        {filteredGraphData && !is3D && (
           <GraphCanvas
+            graphData={filteredGraphData}
+            highlightedIds={highlightedIds}
+            onNodeClick={handleNodeClick}
+            incomingIds={incomingIds}
+            outgoingIds={outgoingIds}
+            viewMode={viewMode}
+            depthMap={depthMap}
+            showClusters={showClusters}
+            forceStrength={forceStrength}
+            linkDistance={linkDistance}
+            controlsRef={graphControlsRef}
+          />
+        )}
+        {filteredGraphData && is3D && (
+          <GraphCanvas3D
             graphData={filteredGraphData}
             highlightedIds={highlightedIds}
             onNodeClick={handleNodeClick}
