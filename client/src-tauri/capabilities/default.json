@@ -8,7 +8,10 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [{ "name": "server", "sidecar": true }]
+    },
     "shell:allow-kill"
   ]
 }
