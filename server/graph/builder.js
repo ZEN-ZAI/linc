@@ -360,7 +360,58 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 6. Merge external nodes into nodes array
+  // 6. Eliminate index files: rewire links through them, then remove
+  const INDEX_RE = /^index\.[jt]sx?$|^index\.(?:mjs|cjs)$/;
+  const indexNodeIds = new Set();
+  for (const node of nodes) {
+    if (INDEX_RE.test(path.basename(node.id))) {
+      indexNodeIds.add(node.id);
+    }
+  }
+
+  for (const indexId of indexNodeIds) {
+    const incoming = [];
+    const outgoing = [];
+    for (const link of rawLinks.values()) {
+      if (link.target === indexId) incoming.push(link);
+      if (link.source === indexId) outgoing.push(link);
+    }
+
+    // Create pass-through links: A → index → B becomes A → B
+    for (const inLink of incoming) {
+      for (const outLink of outgoing) {
+        if (inLink.source === outLink.target) continue;
+        const key = `${inLink.source}|||${outLink.target}`;
+        const strength = Math.min(inLink.strength, outLink.strength);
+        if (!rawLinks.has(key) || rawLinks.get(key).strength < strength) {
+          rawLinks.set(key, {
+            source: inLink.source,
+            target: outLink.target,
+            type: inLink.type,
+            strength,
+          });
+        }
+      }
+    }
+
+    // Remove all links involving this index node
+    for (const [key, link] of rawLinks) {
+      if (link.source === indexId || link.target === indexId) {
+        rawLinks.delete(key);
+      }
+    }
+  }
+
+  // Remove index nodes
+  let i = nodes.length;
+  while (i--) {
+    if (indexNodeIds.has(nodes[i].id)) {
+      nodeById.delete(nodes[i].id);
+      nodes.splice(i, 1);
+    }
+  }
+
+  // 7. Merge external nodes into nodes array
   if (includeExternal) {
     for (const extNode of externalNodes.values()) {
       nodes.push(extNode);
@@ -368,7 +419,7 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 7. Filter links to only those where both endpoints exist
+  // 8. Filter links to only those where both endpoints exist
   const validNodeIds = new Set(nodes.map(n => n.id));
   const links = [];
   for (const link of rawLinks.values()) {
@@ -377,7 +428,7 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 8. Compute connection counts
+  // 9. Compute connection counts
   const inDegree = new Map();
   const outDegree = new Map();
   for (const link of links) {
