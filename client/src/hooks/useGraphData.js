@@ -10,7 +10,7 @@ export function useGraphData() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/analyze', {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: targetPath.trim(), includeExternal }),

@@ -1,6 +1,9 @@
 import { useMemo } from 'react';
 import { SearchBar } from './SearchBar.jsx';
 
+// Detect Tauri desktop context
+const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
 export function ControlPanel({
   graphData,
   filters,
@@ -15,9 +18,17 @@ export function ControlPanel({
 }) {
   async function handlePickFolder() {
     try {
-      const res = await fetch('/api/pick-folder');
-      const data = await res.json();
-      if (data.path) { onPathChange(data.path); onAnalyze(data.path); }
+      if (isTauri()) {
+        // Use native Tauri dialog — works reliably inside the desktop webview
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ directory: true, multiple: false, title: 'Select a project folder' });
+        if (selected) { onPathChange(selected); onAnalyze(selected); }
+      } else {
+        // Browser fallback: ask the Express backend to spawn osascript/zenity
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (data.path) { onPathChange(data.path); onAnalyze(data.path); }
+      }
     } catch { /* cancelled or unsupported */ }
   }
 
@@ -149,7 +160,7 @@ export function ControlPanel({
       )}
 
       {/* Folders */}
-      {folders.length > 0 && folders.length <= 20 && (
+      {folders.length > 0 && (
         <section style={sectionStyle}>
           <label style={labelStyle}>Folders</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
