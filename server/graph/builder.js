@@ -30,6 +30,67 @@ const DEFAULT_EXCLUDES = [
 
 const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.cs', '.go'];
 
+// Strip JSON5/JSONC comments (tsconfig.json supports // and /* */ comments)
+function stripJsonComments(text) {
+  return text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+async function loadTsPaths(rootPath) {
+  const tsConfigNames = ['tsconfig.json', 'tsconfig.app.json', 'jsconfig.json'];
+  // Search rootPath and up to 3 parent directories
+  let dir = rootPath;
+  for (let depth = 0; depth < 4; depth++) {
+    for (const name of tsConfigNames) {
+      try {
+        const configPath = path.join(dir, name);
+        const raw = await fs.readFile(configPath, 'utf-8');
+        const config = JSON.parse(stripJsonComments(raw));
+        const baseUrl = config.compilerOptions?.baseUrl || '.';
+        const paths = config.compilerOptions?.paths;
+        if (!paths) continue;
+        const absBase = path.resolve(dir, baseUrl);
+        return { absBase, paths };
+      } catch { /* try next */ }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+  return null;
+}
+
+function tryResolveTsPaths(specifier, tsConfig, allFilePaths) {
+  if (!tsConfig) return null;
+  const { absBase, paths } = tsConfig;
+
+  for (const [pattern, mappings] of Object.entries(paths)) {
+    const starIdx = pattern.indexOf('*');
+    if (starIdx === -1) {
+      // Exact match: "@components" -> ["./src/components/index.ts"]
+      if (specifier !== pattern) continue;
+      for (const mapping of mappings) {
+        const candidate = path.resolve(absBase, mapping);
+        const resolved = tryResolve(candidate, allFilePaths);
+        if (resolved) return resolved;
+      }
+    } else {
+      // Wildcard: "@/*" -> ["./src/*"]
+      const prefix = pattern.slice(0, starIdx);
+      const suffix = pattern.slice(starIdx + 1);
+      if (!specifier.startsWith(prefix)) continue;
+      if (suffix && !specifier.endsWith(suffix)) continue;
+      const captured = specifier.slice(prefix.length, suffix ? -suffix.length || undefined : undefined);
+      for (const mapping of mappings) {
+        const mapped = mapping.replace('*', captured);
+        const candidate = path.resolve(absBase, mapped);
+        const resolved = tryResolve(candidate, allFilePaths);
+        if (resolved) return resolved;
+      }
+    }
+  }
+  return null;
+}
+
 export async function buildGraph(rootPath, options = {}) {
   const { includeExternal = false } = options;
 
@@ -60,7 +121,10 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 3b. Read go.mod for Go module name (used to detect internal imports)
+  // 3b. Load TypeScript path aliases (tsconfig.json / jsconfig.json)
+  const tsConfig = await loadTsPaths(rootPath);
+
+  // 3c. Read go.mod for Go module name (used to detect internal imports)
   let goModuleName = null;
   try {
     const goModContent = await fs.readFile(path.join(rootPath, 'go.mod'), 'utf-8');
@@ -135,10 +199,14 @@ export async function buildGraph(rootPath, options = {}) {
 
         targetId = path.relative(rootPath, resolved).replace(/\\/g, '/');
       } else {
-        // Bare specifier — try language-specific internal resolution first
+        // Bare specifier — try TypeScript path aliases, then language-specific resolution
         let internalResolved = false;
 
-        if (srcExt === '.cs') {
+        const tsResolved = tryResolveTsPaths(dep.source, tsConfig, allFilePaths);
+        if (tsResolved) {
+          targetId = path.relative(rootPath, tsResolved).replace(/\\/g, '/');
+          internalResolved = true;
+        } else if (srcExt === '.cs') {
           // C# using directive: check against namespace→file map
           const nsFile = nsToFile.get(dep.source);
           if (nsFile) {
