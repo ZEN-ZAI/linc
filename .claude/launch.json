@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "linc-server",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace=server"],
-      "port": 3001
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.js"],
+      "port": 3001,
+      "autoPort": false
     },
     {
       "name": "linc-client",

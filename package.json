@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "tauri:dev": "concurrently \"npm run dev --workspace=server\" \"npm run tauri:dev --workspace=client\"",
-    "tauri:build": "concurrently --kill-others-on-fail \"npm run dev --workspace=server\" \"npm run tauri:build --workspace=client\"",
+    "tauri:build": "npm run build:sidecar --workspace=server && npm run tauri:build --workspace=client",
     "start": "npm run start --workspace=server",
     "build": "npm run build --workspace=client"
   },

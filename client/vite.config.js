@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+// In production Tauri builds, TAURI_ENV_PLATFORM is set by the CLI.
+// Relative /api/* calls won't proxy, so point directly at Express :3001.
+const apiBase = process.env.TAURI_ENV_PLATFORM ? 'http://localhost:3001' : '';
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    'import.meta.env.VITE_API_BASE': JSON.stringify(apiBase),
+  },
   // Tauri: don't obscure Rust errors
   clearScreen: false,
   server: {
