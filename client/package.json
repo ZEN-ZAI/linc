@@ -7,8 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "PATH=$PATH:$HOME/.cargo/bin tauri dev",
+    "tauri:build": "PATH=$PATH:$HOME/.cargo/bin tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
