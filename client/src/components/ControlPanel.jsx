@@ -149,7 +149,7 @@ export function ControlPanel({
       )}
 
       {/* Folders */}
-      {folders.length > 0 && folders.length <= 20 && (
+      {folders.length > 0 && (
         <section style={sectionStyle}>
           <label style={labelStyle}>Folders</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
