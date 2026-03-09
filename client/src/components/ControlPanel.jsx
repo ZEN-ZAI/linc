@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { SearchBar } from './SearchBar.jsx';
+import { FolderTree } from './FolderTree.jsx';
 
 // Detect Tauri desktop context
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -50,6 +51,14 @@ export function ControlPanel({
     if (next.has(folder)) next.delete(folder); else next.add(folder);
     onFilterChange({ ...filters, hiddenFolders: next });
   }
+
+  const toggleFolders = useCallback((folderList, hide) => {
+    const next = new Set(filters.hiddenFolders);
+    for (const f of folderList) {
+      if (hide) next.add(f); else next.delete(f);
+    }
+    onFilterChange({ ...filters, hiddenFolders: next });
+  }, [filters, onFilterChange]);
 
   const handleKeyDown = e => { if (e.key === 'Enter') onAnalyze(analyzePath); };
 
@@ -163,16 +172,12 @@ export function ControlPanel({
       {folders.length > 0 && (
         <section style={sectionStyle}>
           <label style={labelStyle}>Folders</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
-            {folders.map(folder => (
-              <CheckRow
-                key={folder}
-                checked={!filters.hiddenFolders.has(folder)}
-                onChange={() => toggleFolder(folder)}
-                label={folder}
-              />
-            ))}
-          </div>
+          <FolderTree
+            folders={folders}
+            hiddenFolders={filters.hiddenFolders}
+            onToggle={toggleFolder}
+            onToggleAll={toggleFolders}
+          />
         </section>
       )}
 
