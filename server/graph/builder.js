@@ -419,7 +419,7 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 7. Filter links to only those where both endpoints exist
+  // 8. Filter links to only those where both endpoints exist
   const validNodeIds = new Set(nodes.map(n => n.id));
   const links = [];
   for (const link of rawLinks.values()) {
@@ -428,7 +428,7 @@ export async function buildGraph(rootPath, options = {}) {
     }
   }
 
-  // 8. Compute connection counts
+  // 9. Compute connection counts
   const inDegree = new Map();
   const outDegree = new Map();
   for (const link of links) {
