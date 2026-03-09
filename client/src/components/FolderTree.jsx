@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 
 /**
  * Build a nested tree from flat folder paths like ["src", "src/components", "src/utils"]
@@ -49,15 +49,15 @@ function TreeNode({ node, depth, hiddenFolders, onToggle, onToggleAll, defaultEx
   const checked = checkState === 'all';
   const indeterminate = checkState === 'partial';
 
-  const handleCheck = useCallback(() => {
+  function handleCheck() {
     const folders = collectFolders(node);
     onToggleAll(folders, checkState === 'all');
-  }, [node, checkState, onToggleAll]);
+  }
 
-  const handleExpand = useCallback((e) => {
+  function handleExpand(e) {
     e.stopPropagation();
     setExpanded(v => !v);
-  }, []);
+  }
 
   return (
     <div>

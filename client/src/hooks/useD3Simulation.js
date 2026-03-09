@@ -103,7 +103,7 @@ export function useD3Simulation({
           .attr('stroke-opacity', 0)
           .call(e => e.transition().duration(300).attr('stroke-opacity', 0.5)),
         update => update,
-        exit => exit.transition().duration(200).attr('stroke-opacity', 0).remove()
+        exit => exit.classed('exiting', true).transition().duration(200).attr('stroke-opacity', 0).remove()
       )
       .attr('stroke', '#4a5568')
       .attr('stroke-width', d => 0.8 + d.strength * 2.5)
@@ -149,7 +149,7 @@ export function useD3Simulation({
             .attr('dy', d => nodeRadius(d) + 11);
           return update;
         },
-        exit => exit.transition().duration(200).attr('opacity', 0).remove()
+        exit => exit.classed('exiting', true).transition().duration(200).attr('opacity', 0).remove()
       );
 
     const drag = d3.drag()
@@ -219,7 +219,7 @@ export function useD3Simulation({
     if (viewMode === 'depth' && depthMap) {
       const maxDepth = Math.max(1, ...[...depthMap.values()].filter(v => v >= 0));
       const depthColor = d3.scaleSequential(d3.interpolateWarm).domain([0, maxDepth]);
-      svg.select('.nodes-layer').selectAll('g.node')
+      svg.select('.nodes-layer').selectAll('g.node:not(.exiting)')
         .transition().duration(300)
         .attr('opacity', 1)
         .select('circle')
@@ -229,7 +229,7 @@ export function useD3Simulation({
         })
         .attr('stroke', '#0f1117')
         .attr('stroke-width', 1.5);
-      svg.select('.links-layer').selectAll('line.link')
+      svg.select('.links-layer').selectAll('line.link:not(.exiting)')
         .transition().duration(200)
         .attr('stroke-opacity', 0.3).attr('stroke', '#4a5568');
       return;
@@ -237,7 +237,7 @@ export function useD3Simulation({
 
     // Default: directional highlight
     const has = highlightedIds && highlightedIds.size > 0;
-    svg.select('.nodes-layer').selectAll('g.node')
+    svg.select('.nodes-layer').selectAll('g.node:not(.exiting)')
       .transition().duration(200)
       .attr('opacity', d => {
         if (!has) return d.connectionCount === 0 ? 0.35 : 1;
@@ -256,7 +256,7 @@ export function useD3Simulation({
       .attr('stroke', d => has && highlightedIds.has(d.id) ? '#f6e05e' : '#0f1117')
       .attr('stroke-width', d => has && highlightedIds.has(d.id) ? 2.5 : 1.5);
 
-    svg.select('.links-layer').selectAll('line.link')
+    svg.select('.links-layer').selectAll('line.link:not(.exiting)')
       .transition().duration(200)
       .attr('stroke-opacity', d => {
         if (!has) return 0.5;
