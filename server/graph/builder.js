@@ -30,9 +30,35 @@ const DEFAULT_EXCLUDES = [
 
 const RESOLVE_EXTS = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.cs', '.go'];
 
-// Strip JSON5/JSONC comments (tsconfig.json supports // and /* */ comments)
+// Strip JSONC features: comments and trailing commas (tsconfig.json supports these)
+// Walks character-by-character to avoid stripping // inside string values
 function stripJsonComments(text) {
-  return text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    // String literal — copy verbatim
+    if (text[i] === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\\') j++; // skip escaped char
+        j++;
+      }
+      result += text.slice(i, j + 1);
+      i = j + 1;
+    // Line comment
+    } else if (text[i] === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    // Block comment
+    } else if (text[i] === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i += 2;
+    } else {
+      result += text[i++];
+    }
+  }
+  // Strip trailing commas before } or ]
+  return result.replace(/,\s*([}\]])/g, '$1');
 }
 
 async function loadTsPaths(rootPath) {
@@ -47,10 +73,12 @@ async function loadTsPaths(rootPath) {
         const config = JSON.parse(stripJsonComments(raw));
         const baseUrl = config.compilerOptions?.baseUrl || '.';
         const paths = config.compilerOptions?.paths;
-        if (!paths) continue;
+        if (!paths) return null; // config found but no paths — authoritative, stop searching
         const absBase = path.resolve(dir, baseUrl);
         return { absBase, paths };
-      } catch { /* try next */ }
+      } catch (err) {
+        if (err?.code !== 'ENOENT') return null; // parse error = authoritative, stop
+      }
     }
     const parent = path.dirname(dir);
     if (parent === dir) break; // reached filesystem root
@@ -63,7 +91,19 @@ function tryResolveTsPaths(specifier, tsConfig, allFilePaths) {
   if (!tsConfig) return null;
   const { absBase, paths } = tsConfig;
 
-  for (const [pattern, mappings] of Object.entries(paths)) {
+  // Sort patterns by specificity: exact matches first, then by longest prefix+suffix
+  const entries = Object.entries(paths).sort(([a], [b]) => {
+    const aStarIdx = a.indexOf('*');
+    const bStarIdx = b.indexOf('*');
+    const aExact = aStarIdx === -1;
+    const bExact = bStarIdx === -1;
+    if (aExact !== bExact) return aExact ? -1 : 1;
+    const aLen = aExact ? a.length : aStarIdx + (a.length - aStarIdx - 1);
+    const bLen = bExact ? b.length : bStarIdx + (b.length - bStarIdx - 1);
+    return bLen - aLen || a.localeCompare(b);
+  });
+
+  for (const [pattern, mappings] of entries) {
     const starIdx = pattern.indexOf('*');
     if (starIdx === -1) {
       // Exact match: "@components" -> ["./src/components/index.ts"]
@@ -132,7 +172,7 @@ export async function buildGraph(rootPath, options = {}) {
     if (modMatch) goModuleName = modMatch[1];
   } catch { /* no go.mod */ }
 
-  // 3c. First pass: collect C# namespace declarations → namespace → absPath
+  // 3d. First pass: collect C# namespace declarations → namespace → absPath
   const nsToFile = new Map();
   for (const [absPath, deps] of parsedMap) {
     if (path.extname(absPath).toLowerCase() !== '.cs') continue;
@@ -169,6 +209,8 @@ export async function buildGraph(rootPath, options = {}) {
   // 5. Resolve specifiers and build raw links
   const rawLinks = new Map(); // `src|tgt` -> { source, target, type, strength }
   const externalNodes = new Map(); // externalId -> node
+  const tsPathCache = new Map(); // specifier -> resolved|null (memoize path alias lookups)
+  const JS_TS_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
 
   for (const [absPath, deps] of parsedMap) {
     const fromId = path.relative(rootPath, absPath).replace(/\\/g, '/');
@@ -202,7 +244,16 @@ export async function buildGraph(rootPath, options = {}) {
         // Bare specifier — try TypeScript path aliases, then language-specific resolution
         let internalResolved = false;
 
-        const tsResolved = tryResolveTsPaths(dep.source, tsConfig, allFilePaths);
+        // Only attempt TS path resolution for JS/TS files
+        let tsResolved = null;
+        if (JS_TS_EXTS.has(srcExt)) {
+          if (tsPathCache.has(dep.source)) {
+            tsResolved = tsPathCache.get(dep.source);
+          } else {
+            tsResolved = tryResolveTsPaths(dep.source, tsConfig, allFilePaths);
+            tsPathCache.set(dep.source, tsResolved);
+          }
+        }
         if (tsResolved) {
           targetId = path.relative(rootPath, tsResolved).replace(/\\/g, '/');
           internalResolved = true;
