@@ -170,6 +170,39 @@ export function useD3Simulation({
 
     simulation.nodes(nodes);
     simulation.force('link').links(links);
+
+    // Center-gravity force: pull deep-dependency nodes toward center (Clean Architecture style)
+    // Cyclic nodes (depth -1) use in-degree as fallback
+    const inDeg = new Map();
+    for (const l of links) {
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      inDeg.set(t, (inDeg.get(t) || 0) + 1);
+    }
+    const maxIn = Math.max(1, ...[...inDeg.values()], 1);
+    const depths = depthMap.size ? [...depthMap.values()].filter(d => d >= 0) : [];
+    const maxDepth = depths.length ? Math.max(1, ...depths) : 1;
+    const cx = svgEl.clientWidth / 2 || 400;
+    const cy = svgEl.clientHeight / 2 || 300;
+    {
+      let simNodes = [];
+      const force = (alpha) => {
+        for (const n of simNodes) {
+          const depth = depthMap.get(n.id);
+          let w;
+          if (depth != null && depth >= 0) {
+            w = depth / maxDepth;
+          } else {
+            w = (inDeg.get(n.id) || 0) / maxIn;
+          }
+          if (w === 0) continue;
+          n.vx += (cx - n.x) * 0.08 * alpha * w;
+          n.vy += (cy - n.y) * 0.08 * alpha * w;
+        }
+      };
+      force.initialize = (n) => { simNodes = n; };
+      simulation.force('centerGravity', force);
+    }
+
     simulation.alpha(0.5).restart();
 
     simulation.on('tick', () => {

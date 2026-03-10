@@ -11,6 +11,7 @@ export function GraphCanvas3D({
   showClusters,
   forceStrength, linkDistance,
   controlsRef,
+  layoutMode = 'default',
 }) {
   const fgRef = useRef(null);
   const containerRef = useRef();
@@ -18,8 +19,10 @@ export function GraphCanvas3D({
   const userInteractedRef = useRef(false);
   const forceStrengthRef = useRef(forceStrength);
   const linkDistanceRef = useRef(linkDistance);
+  const layoutModeRef = useRef(layoutMode);
   forceStrengthRef.current = forceStrength;
   linkDistanceRef.current = linkDistance;
+  layoutModeRef.current = layoutMode;
 
   // Track container size
   useEffect(() => {
@@ -33,17 +36,22 @@ export function GraphCanvas3D({
     return () => ro.disconnect();
   }, []);
 
-  // Deep-clone graph data — strip 2D simulation coords, seed random 3D positions
+  // Deep-clone graph data — strip 2D simulation coords, seed on sphere surface
   const graphData3D = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] };
-    const spread = Math.max(10, Math.sqrt(graphData.nodes.length) * 8);
+    const radius = Math.max(10, Math.sqrt(graphData.nodes.length) * 8);
     return {
-      nodes: graphData.nodes.map(({ x, y, z, vx, vy, vz, fx, fy, fz, index, ...rest }) => ({
-        ...rest,
-        x: (Math.random() - 0.5) * spread,
-        y: (Math.random() - 0.5) * spread,
-        z: (Math.random() - 0.5) * spread,
-      })),
+      nodes: graphData.nodes.map(({ x, y, z, vx, vy, vz, fx, fy, fz, index, ...rest }) => {
+        // Random point on sphere surface (uniform distribution)
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos(2 * Math.random() - 1);
+        return {
+          ...rest,
+          x: radius * Math.sin(phi) * Math.cos(theta),
+          y: radius * Math.sin(phi) * Math.sin(theta),
+          z: radius * Math.cos(phi),
+        };
+      }),
       links: graphData.links.map(l => ({
         ...l,
         source: typeof l.source === 'object' ? l.source.id : l.source,
@@ -76,8 +84,19 @@ export function GraphCanvas3D({
     if (!fg) return;
     const fs = forceStrengthRef.current;
     const ld = linkDistanceRef.current;
+    const mode = layoutModeRef.current;
     const charge = fg.d3Force('charge');
-    if (charge) charge.strength(d => -(120 * fs) - (d.connectionCount || 0) * 6 * fs);
+    if (charge) {
+      if (mode === 'sphere') {
+        // Weaker charge so radial sphere force dominates
+        charge.strength(d => -(30 * fs) - (d.connectionCount || 0) * 2 * fs);
+        charge.distanceMax(150);
+      } else {
+        // Default: standard force-directed layout
+        charge.strength(d => -(120 * fs) - (d.connectionCount || 0) * 6 * fs);
+        charge.distanceMax(300);
+      }
+    }
     const link = fg.d3Force('link');
     if (link) link.distance(d => ld + (1 - (d.strength || 0.5)) * 80);
   }, []);
@@ -119,6 +138,68 @@ export function GraphCanvas3D({
     }
     fg.d3ReheatSimulation();
   }, [showClusters]);
+
+  // Concentric sphere force: layered shells based on dependency depth
+  // depth 0 = entry points (outer shell), max depth = core entities (center)
+  // Cyclic nodes (depth -1) use in-degree as fallback
+  // Only active in 'sphere' layoutMode
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg || !graphData3D.nodes.length) return;
+
+    if (layoutMode !== 'sphere') {
+      fg.d3Force('centerGravity', null);
+      configureForces();
+      fg.d3ReheatSimulation();
+      return;
+    }
+
+    // Compute in-degree as fallback for cyclic nodes
+    const inDeg = new Map();
+    for (const l of graphData3D.links) {
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      inDeg.set(t, (inDeg.get(t) || 0) + 1);
+    }
+    const maxIn = Math.max(1, ...([...inDeg.values()]), 1);
+
+    const depths = depthMap.size ? [...depthMap.values()].filter(d => d >= 0) : [];
+    const maxDepth = depths.length ? Math.max(1, ...depths) : 1;
+    const nodeCount = graphData3D.nodes.length;
+    const sphereRadius = Math.max(30, Math.cbrt(nodeCount) * 18);
+
+    let simNodes = [];
+    const force = (alpha) => {
+      // Use max(alpha, 0.3) so radial constraint never weakens below 30%
+      // This ensures sphere shape is maintained as simulation cools
+      const effectiveAlpha = Math.max(alpha, 0.3);
+      const k = 2.0;
+      for (const n of simNodes) {
+        const x = n.x || 0, y = n.y || 0, z = n.z || 0;
+        const dist = Math.sqrt(x * x + y * y + z * z) || 1;
+
+        // Use depth when available, in-degree ratio as fallback
+        const depth = depthMap.get(n.id);
+        let layerRatio;
+        if (depth != null && depth >= 0) {
+          layerRatio = depth / maxDepth;
+        } else {
+          layerRatio = (inDeg.get(n.id) || 0) / maxIn;
+        }
+
+        // Higher ratio → closer to center (core), 0 → outer shell
+        const targetR = sphereRadius * (0.15 + (1 - layerRatio) * 0.85);
+        const diff = targetR - dist;
+        const f = (diff / dist) * k * effectiveAlpha;
+        n.vx += x * f;
+        n.vy += y * f;
+        n.vz += z * f;
+      }
+    };
+    force.initialize = (n) => { simNodes = n; };
+    fg.d3Force('centerGravity', force);
+    configureForces();
+    fg.d3ReheatSimulation();
+  }, [graphData3D, depthMap, layoutMode, configureForces]);
 
   // Render transparent cluster spheres around folder groups
   // Reuse meshes keyed by folder, update position/scale instead of recreating
@@ -226,7 +307,7 @@ export function GraphCanvas3D({
     if (!fg) return;
     configureForces();
     fg.d3ReheatSimulation();
-  }, [forceStrength, linkDistance, configureForces]);
+  }, [forceStrength, linkDistance, layoutMode, configureForces]);
 
   // Max depth for color scaling
   const maxDepth = useMemo(() => {
