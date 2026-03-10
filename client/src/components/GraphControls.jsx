@@ -7,6 +7,8 @@ export function GraphControls({
   viewMode, onViewMode,
   showClusters, onClustersChange,
   is3D, onToggle3D,
+  layoutMode, onLayoutModeChange,
+  recursiveHighlight, onRecursiveHighlightChange,
 }) {
   const [open, setOpen] = useState(true);
 
@@ -76,6 +78,13 @@ export function GraphControls({
               >
                 Clusters
               </ToggleBtn>
+              <ToggleBtn
+                active={recursiveHighlight}
+                onClick={() => onRecursiveHighlightChange(!recursiveHighlight)}
+                activeColor="#fbd38d" activeBg="#744210"
+              >
+                Recursive
+              </ToggleBtn>
             </div>
             <Divider />
             <ToggleBtn
@@ -85,6 +94,18 @@ export function GraphControls({
             >
               3D
             </ToggleBtn>
+            {is3D && (
+              <>
+                <ModeSwitch
+                  value={layoutMode}
+                  options={[
+                    { value: 'default', label: 'Default' },
+                    { value: 'sphere', label: 'Sphere' },
+                  ]}
+                  onChange={onLayoutModeChange}
+                />
+              </>
+            )}
           </div>
         </div>
       )}
@@ -156,6 +177,38 @@ function ToggleBtn({ active, onClick, activeColor, activeBg, children }) {
     >
       {children}
     </button>
+  );
+}
+
+function ModeSwitch({ value, options, onChange }) {
+  return (
+    <div style={{
+      display: 'flex',
+      background: '#0f1117',
+      borderRadius: 5,
+      border: '1px solid #2d3748',
+      overflow: 'hidden',
+    }}>
+      {options.map((opt, i) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          style={{
+            padding: '5px 8px',
+            fontSize: 11,
+            fontWeight: 500,
+            cursor: 'pointer',
+            border: 'none',
+            whiteSpace: 'nowrap',
+            background: value === opt.value ? '#2a4365' : 'transparent',
+            color: value === opt.value ? '#90cdf4' : '#718096',
+            borderRight: i < options.length - 1 ? '1px solid #2d3748' : 'none',
+          }}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
   );
 }
 

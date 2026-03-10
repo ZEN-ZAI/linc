@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { GraphCanvas } from './components/GraphCanvas.jsx';
 import { GraphCanvas3D } from './components/GraphCanvas3D.jsx';
 import { GraphControls } from './components/GraphControls.jsx';
@@ -52,6 +52,8 @@ export default function App() {
   const [forceStrength, setForceStrength] = useState(1);
   const [linkDistance, setLinkDistance] = useState(120);
   const [is3D, setIs3D] = useState(false);
+  const [layoutMode, setLayoutMode] = useState('default'); // 'default' | 'sphere'
+  const [recursiveHighlight, setRecursiveHighlight] = useState(false);
   const graphControlsRef = useRef({});
 
   const filteredGraphData = useMemo(() => {
@@ -88,17 +90,66 @@ export default function App() {
     const data = filteredGraphData || graphData;
     if (!data) return;
     const getId = v => (typeof v === 'object' ? v.id : v);
-    const outgoing = new Set();
-    const incoming = new Set();
-    for (const l of data.links) {
-      const s = getId(l.source), t = getId(l.target);
-      if (s === node.id) outgoing.add(t);
-      if (t === node.id) incoming.add(s);
+
+    if (!recursiveHighlight) {
+      const outgoing = new Set();
+      const incoming = new Set();
+      for (const l of data.links) {
+        const s = getId(l.source), t = getId(l.target);
+        if (s === node.id) outgoing.add(t);
+        if (t === node.id) incoming.add(s);
+      }
+      setOutgoingIds(outgoing);
+      setIncomingIds(incoming);
+      setHighlightedIds(new Set([node.id, ...outgoing, ...incoming]));
+    } else {
+      // Build adjacency maps
+      const forwardAdj = new Map();
+      const reverseAdj = new Map();
+      for (const l of data.links) {
+        const s = getId(l.source), t = getId(l.target);
+        if (!forwardAdj.has(s)) forwardAdj.set(s, []);
+        forwardAdj.get(s).push(t);
+        if (!reverseAdj.has(t)) reverseAdj.set(t, []);
+        reverseAdj.get(t).push(s);
+      }
+
+      // BFS forward: all transitive outgoing
+      const outgoing = new Set();
+      const queue = [node.id];
+      while (queue.length > 0) {
+        const cur = queue.pop();
+        for (const nb of (forwardAdj.get(cur) || [])) {
+          if (nb !== node.id && !outgoing.has(nb)) {
+            outgoing.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+
+      // BFS backward: all transitive incoming
+      const incoming = new Set();
+      const queue2 = [node.id];
+      while (queue2.length > 0) {
+        const cur = queue2.pop();
+        for (const nb of (reverseAdj.get(cur) || [])) {
+          if (nb !== node.id && !incoming.has(nb)) {
+            incoming.add(nb);
+            queue2.push(nb);
+          }
+        }
+      }
+
+      setOutgoingIds(outgoing);
+      setIncomingIds(incoming);
+      setHighlightedIds(new Set([node.id, ...outgoing, ...incoming]));
     }
-    setOutgoingIds(outgoing);
-    setIncomingIds(incoming);
-    setHighlightedIds(new Set([node.id, ...outgoing, ...incoming]));
-  }, [filteredGraphData, graphData]);
+  }, [filteredGraphData, graphData, recursiveHighlight]);
+
+  // Re-highlight when recursive toggle changes while a node is selected
+  useEffect(() => {
+    if (selectedNode) handleNodeClick(selectedNode);
+  }, [recursiveHighlight]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleHighlight = useCallback((ids) => {
     setHighlightedIds(ids);
@@ -116,6 +167,7 @@ export default function App() {
     setOutgoingIds(new Set());
     setViewMode(null);
     setShowClusters(false);
+    setLayoutMode('default');
   }, [clearGraph]);
 
   const handleAnalyze = useCallback((p) => {
@@ -127,6 +179,7 @@ export default function App() {
     setOutgoingIds(new Set());
     setViewMode(null);
     setShowClusters(false);
+    setLayoutMode('default');
     analyze(p);
   }, [analyze, clearGraph]);
 
@@ -167,6 +220,10 @@ export default function App() {
             onClustersChange={setShowClusters}
             is3D={is3D}
             onToggle3D={() => setIs3D(v => !v)}
+            layoutMode={layoutMode}
+            onLayoutModeChange={setLayoutMode}
+            recursiveHighlight={recursiveHighlight}
+            onRecursiveHighlightChange={setRecursiveHighlight}
           />
         )}
         {filteredGraphData && !is3D && (
@@ -197,6 +254,7 @@ export default function App() {
             forceStrength={forceStrength}
             linkDistance={linkDistance}
             controlsRef={graphControlsRef}
+            layoutMode={layoutMode}
           />
         )}
       </div>
