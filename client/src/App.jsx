@@ -167,6 +167,7 @@ export default function App() {
     setOutgoingIds(new Set());
     setViewMode(null);
     setShowClusters(false);
+    setLayoutMode('default');
   }, [clearGraph]);
 
   const handleAnalyze = useCallback((p) => {
@@ -178,6 +179,7 @@ export default function App() {
     setOutgoingIds(new Set());
     setViewMode(null);
     setShowClusters(false);
+    setLayoutMode('default');
     analyze(p);
   }, [analyze, clearGraph]);
 
